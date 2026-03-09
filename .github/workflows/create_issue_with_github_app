@@ -1,0 +1,25 @@
+name: Create issue with GitHub App
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create_issue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate installation token (GitHub App)
+        id: generate-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Create issue via REST API (GitHub App token)
+        run: |
+          curl --request POST \
+            --url "https://api.github.com/repos/${{ github.repository }}/issues" \
+            --header "authorization: Bearer ${{ steps.generate-token.outputs.token }}" \
+            --header "accept: application/vnd.github+json" \
+            --header "content-type: application/json" \
+            --data "{\"title\":\"NHI token test (GitHub App)\",\"body\":\"Created by GitHub App installation token\"}" \
+            --fail
