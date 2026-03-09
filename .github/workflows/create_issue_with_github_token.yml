@@ -1,0 +1,21 @@
+name: Create issue with GITHUB_TOKEN
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  create_issue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create issue using GitHub REST API (GITHUB_TOKEN)
+        run: |
+          curl --request POST \
+            --url "https://api.github.com/repos/${{ github.repository }}/issues" \
+            --header "authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            --header "content-type: application/json" \
+            --data "{\"title\":\"NHI token test\",\"body\":\"Created by workflow: ${{ github.workflow }}\\nRun: ${{ github.run_id }}\"}" \
+            --fail
