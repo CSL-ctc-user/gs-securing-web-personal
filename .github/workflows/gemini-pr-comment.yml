@@ -1,0 +1,33 @@
+name: Gemini PR Comment
+
+on:
+  pull_request:
+    types: [opened]
+
+jobs:
+  gemini:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create Gemini App token
+        uses: actions/create-github-app-token@v2
+        id: gemini
+        with:
+          app-id: ${{ secrets.GEMINI_APP_ID }}
+          private-key: ${{ secrets.GEMINI_APP_PRIVATE_KEY }}
+
+      - name: Call Gemini API
+        run: |
+          curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent" \
+            -H "Content-Type: application/json" \
+            -H "X-Goog-Api-Key: ${{ secrets.GEMINI_API_KEY }}" \
+            -d '{
+              "contents":[{"parts":[{"text":"Please briefly review this pull request."}]}]
+            }' > result.json
+
+      - name: Comment as Gemini-nhi
+        run: |
+          BODY=$(jq -r '.candidates[0].content.parts[0].text' result.json)
+          gh pr comment "${{ github.event.pull_request.number }}" --body "$BODY"
+        env:
+          GH_TOKEN: ${{ steps.gemini.outputs.token }}
