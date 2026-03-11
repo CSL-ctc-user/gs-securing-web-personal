@@ -16,3 +16,6 @@ dependency-reduced-pom.xml
 .idea
 *.iml
 README.html
+
+.gemini/
+gha-creds-*.json
