@@ -40,6 +40,7 @@ jobs:
             }' > result.json
 
       - name: Comment as Gemini-nhi
+        if: ${{ github.event_name == 'pull_request' }}
         run: |
           BODY=$(jq -r '.candidates[0].content.parts[0].text' result.json)
           gh pr comment "${{ github.event.pull_request.number }}" \
