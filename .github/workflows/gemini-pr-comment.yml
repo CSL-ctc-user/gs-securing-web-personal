@@ -31,7 +31,8 @@ jobs:
       - name: Comment as Gemini-nhi
         run: |
           BODY=$(jq -r '.candidates[0].content.parts[0].text' result.json)
-          gh pr comment "${{ github.event.pull_request.number }}" --body "$BODY"
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" \
+            --body "$BODY"
         env:
           GH_TOKEN: ${{ steps.gemini.outputs.token }}
-          GH_REPO: ${{ github.repository }}
