@@ -3,6 +3,7 @@ name: Gemini PR Comment
 on:
   pull_request:
     types: [opened]
+  workflow_dispatch: {}
 
 jobs:
   gemini:
@@ -11,7 +12,17 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
+
+      - name: Debug secrets presence (safe)
+        run: |
+          if [ -z "${KEY}" ]; then
+            echo "GEMINI_APP_PRIVATE_KEY is EMPTY"
+          else
+            echo "GEMINI_APP_PRIVATE_KEY is SET (non-empty)"
+          fi
+        env:
+          KEY: ${{ secrets.GEMINI_APP_PRIVATE_KEY }}
+
       - name: Create Gemini App token
         uses: actions/create-github-app-token@v2
         id: gemini
