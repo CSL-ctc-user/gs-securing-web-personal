@@ -34,3 +34,4 @@ jobs:
           gh pr comment "${{ github.event.pull_request.number }}" --body "$BODY"
         env:
           GH_TOKEN: ${{ steps.gemini.outputs.token }}
+          GH_REPO: ${{ github.repository }}
