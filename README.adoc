@@ -282,3 +282,7 @@ The following guides may also be helpful:
 * https://spring.io/guides/tutorials/spring-security-and-angular-js/[Spring Security and Angular JS] (Tutorial)
 
 include::https://raw.githubusercontent.com/spring-guides/getting-started-macros/main/footer.adoc[]
+
+
+
+Gemini NHI trigger test
