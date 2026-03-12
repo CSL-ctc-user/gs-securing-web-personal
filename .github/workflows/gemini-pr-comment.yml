@@ -13,6 +13,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ★追加：Entro 相関用のアンカー secret を参照（値は出力しない）
+      - name: NHI anchor (safe)
+        run: |
+          test -n "${NHI_ANCHOR_SECRET}" || (echo "NHI_ANCHOR_SECRET is EMPTY" && exit 1)
+          echo "NHI anchor loaded"
+        env:
+          NHI_ANCHOR_SECRET: ${{ secrets.NHI_ANCHOR_SECRET }}
+
       - name: Debug secrets presence (safe)
         run: |
           if [ -z "${KEY}" ]; then
