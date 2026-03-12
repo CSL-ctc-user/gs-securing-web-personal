@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       pr_number:
-        description: "Comment target PR number (only for workflow_dispatch)"
+        description: "PR number to comment on (required for workflow_dispatch)"
         required: false
         type: string
 
@@ -44,48 +44,47 @@ jobs:
           echo "PR title=${{ github.event.pull_request.title }}"
           echo "PR author=${{ github.event.pull_request.user.login }}"
 
-      # --- ここで本来は Gemini API を呼び出して result.json を生成 ---
+      # --- TODO: ここで Gemini API/CLI を呼んで result.json を生成する ---
       - name: Placeholder for Gemini processing
         run: |
-          echo "Here we will call Gemini API later"
-          # TODO: result.json を生成する処理を入れる
+          echo "TODO: Generate result.json here (Gemini API/CLI call)"
 
       - name: Verify result.json exists
         run: |
           if [ ! -f result.json ]; then
             echo "::error::result.json not found. Generate it in the Gemini step."
+            echo "Current dir:"
+            pwd
+            echo "Files:"
             ls -la
             exit 1
           fi
 
-      # ✅ result.json から本文を抽出して環境変数に入れる
       - name: Extract BODY from result.json
         run: |
           BODY="$(jq -r '.candidates[0].content.parts[0].text // empty' result.json)"
 
           if [ -z "$BODY" ] || [ "$BODY" = "null" ]; then
-            echo "::error::BODY is empty. Check result.json structure."
-            echo "---- result.json (head) ----"
+            echo "::error::BODY is empty or null. Check result.json structure."
+            echo "---- result.json (first 2000 chars) ----"
             head -c 2000 result.json || true
             echo
             exit 1
           fi
 
-          # 複数行対応でGITHUB_ENVへ
+          # 複数行対応でGITHUB_ENVへ格納
           {
             echo "BODY<<EOF"
             echo "$BODY"
             echo "EOF"
           } >> "$GITHUB_ENV"
 
-      # ✅ PR番号を決定（pull_request なら event から、workflow_dispatch なら inputs から）
       - name: Determine PR number
         id: pr
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
           else
-            # workflow_dispatchの場合は inputs.pr_number を使う
             PR_IN="${{ inputs.pr_number }}"
             if [ -n "$PR_IN" ]; then
               echo "number=$PR_IN" >> "$GITHUB_OUTPUT"
@@ -94,8 +93,7 @@ jobs:
             fi
           fi
 
-      # ✅ 抽出した BODY を PR にコメント投稿（GitHub API）
-      - name: Post Gemini result to PR
+      - name: Post Gemini result to PR (GitHub REST API)
         if: steps.pr.outputs.number != ''
         env:
           GH_TOKEN: ${{ github.token }}
@@ -104,15 +102,16 @@ jobs:
           BODY: ${{ env.BODY }}
         run: |
           echo "Posting comment to PR #$PR_NUMBER on $REPO"
+
           curl -sS -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" \
             -d "$(jq -n --arg body "$BODY" '{body: $body}')"
 
-      # workflow_dispatch で pr_number を渡してない場合は明示的にスキップ通知
       - name: Skip notice (no PR number)
         if: steps.pr.outputs.number == ''
         run: |
-          echo "No PR number provided. Skipping comment."
-          echo "If you ran workflow_dispatch, set inputs.pr_number."
+          echo "No PR number available."
+          echo "If you used workflow_dispatch, set inputs.pr_number."
+``
