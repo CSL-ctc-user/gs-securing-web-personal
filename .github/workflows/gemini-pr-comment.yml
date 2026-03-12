@@ -3,62 +3,39 @@ name: Gemini PR Comment
 on:
   pull_request:
     types: [opened]
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 jobs:
   gemini:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. リポジトリをチェックアウト
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ★追加：Entro 相関用のアンカー secret を参照（値は出力しない）
-      - name: NHI anchor (safe)
+      # 2. デバッグ用：どのイベントで起動されたかを確認
+      - name: Show trigger context
         run: |
-          test -n "${NHI_ANCHOR_SECRET}" || (echo "NHI_ANCHOR_SECRET is EMPTY" && exit 1)
-          echo "NHI anchor loaded"
-        env:
-          NHI_ANCHOR_SECRET: ${{ secrets.NHI_ANCHOR_SECRET }}
+          echo "event_name=${{ github.event_name }}"
+          echo "actor=${{ github.actor }}"
+          echo "repository=${{ github.repository }}"
 
-      - name: Debug secrets presence (safe)
+      # 3. PR 情報の確認（PRトリガー時のみ）
+      - name: Show PR info (if pull_request)
+        if: github.event_name == 'pull_request'
         run: |
-          if [ -z "${KEY}" ]; then
-            echo "GEMINI_APP_PRIVATE_KEY is EMPTY"
-          else
-            echo "GEMINI_APP_PRIVATE_KEY is SET (non-empty)"
-          fi
-        env:
-          KEY: ${{ secrets.GEMINI_APP_PRIVATE_KEY }}
+          echo "PR number=${{ github.event.pull_request.number }}"
+          echo "PR title=${{ github.event.pull_request.title }}"
+          echo "PR author=${{ github.event.pull_request.user.login }}"
 
-      - name: Create Gemini App token
-        uses: actions/create-github-app-token@v2
-        id: gemini
-        with:
-          app-id: ${{ secrets.GEMINI_APP_ID }}
-          private-key: ${{ secrets.GEMINI_APP_PRIVATE_KEY }}
-
-      - name: Call Gemini API
+      # 4. 手動実行時の確認
+      - name: Show manual dispatch info
+        if: github.event_name == 'workflow_dispatch'
         run: |
-          curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent" \
-            -H "Content-Type: application/json" \
-            -H "X-Goog-Api-Key: ${{ secrets.GEMINI_API_KEY }}" \
-            -d '{
-              "contents":[{"parts":[{"text":"Please briefly review this pull request."}]}]
-            }' > result.json
+          echo "Manually triggered workflow"
 
-      - name: Comment as Gemini-nhi
-        if: ${{ github.event_name == 'pull_request' }}
+      # 5. （ダミー）Gemini 処理の代わり
+      - name: Placeholder for Gemini processing
         run: |
-          BODY=$(jq -r '.candidates[0].content.parts[0].text' result.json)
-          gh pr comment "${{ github.event.pull_request.number }}" \
-            --repo "${{ github.repository }}" \
-            --body "$BODY"
-
-      - name: Sanity check private key header
-  　    run: |
-         echo "${{ secrets.GEMINI_APP_PRIVATE_KEY }}" | head -n 1
-         
-       env:
-          GH_TOKEN: ${{ steps.gemini.outputs.token }}
-
+          echo "Here we will call Gemini API later"
