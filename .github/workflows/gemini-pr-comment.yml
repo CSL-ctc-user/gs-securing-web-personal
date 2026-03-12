@@ -10,18 +10,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. リポジトリをチェックアウト
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. デバッグ用：どのイベントで起動されたかを確認
       - name: Show trigger context
         run: |
           echo "event_name=${{ github.event_name }}"
           echo "actor=${{ github.actor }}"
           echo "repository=${{ github.repository }}"
 
-      # 3. PR 情報の確認（PRトリガー時のみ）
       - name: Show PR info (if pull_request)
         if: github.event_name == 'pull_request'
         run: |
@@ -29,13 +26,23 @@ jobs:
           echo "PR title=${{ github.event.pull_request.title }}"
           echo "PR author=${{ github.event.pull_request.user.login }}"
 
-      # 4. 手動実行時の確認
       - name: Show manual dispatch info
         if: github.event_name == 'workflow_dispatch'
         run: |
           echo "Manually triggered workflow"
 
-      # 5. （ダミー）Gemini 処理の代わり
       - name: Placeholder for Gemini processing
         run: |
           echo "Here we will call Gemini API later"
+
+      # ★追加：PR にコメントする
+      - name: Post comment to PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+            -d '{"body":"✅ Gemini PR Comment workflow is working!"}'
