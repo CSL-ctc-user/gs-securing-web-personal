@@ -54,5 +54,11 @@ jobs:
           gh pr comment "${{ github.event.pull_request.number }}" \
             --repo "${{ github.repository }}" \
             --body "$BODY"
-        env:
+
+      - name: Sanity check private key header
+  　    run: |
+         echo "${{ secrets.GEMINI_APP_PRIVATE_KEY }}" | head -n 1
+         
+       env:
           GH_TOKEN: ${{ steps.gemini.outputs.token }}
+
