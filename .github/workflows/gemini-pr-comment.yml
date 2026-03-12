@@ -5,7 +5,6 @@ on:
     types: [opened]
   workflow_dispatch:
 
-# ★重要：GITHUB_TOKEN の権限を明示（PRにコメント投稿するため）
 permissions:
   contents: read
   pull-requests: write
@@ -31,25 +30,32 @@ jobs:
           echo "PR title=${{ github.event.pull_request.title }}"
           echo "PR author=${{ github.event.pull_request.user.login }}"
 
-      - name: Show manual dispatch info
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          echo "Manually triggered workflow"
-
+      # --- ここは本来: Gemini API を呼んで result.json を作る場所 ---
+      # いまは result.json が既にある/作っている前提なので placeholder のまま
       - name: Placeholder for Gemini processing
         run: |
           echo "Here we will call Gemini API later"
+          # 例: ここで result.json を生成する処理を入れる
 
-      # ★追加：PR にコメントする（PRはIssue扱いなので issue comments API）
-      - name: Post comment to PR
+      # ✅ result.json から本文を抽出して環境変数に入れる（次stepで使う）
+      - name: Extract BODY from result.json
+        run: |
+          BODY=$(jq -r '.candidates[0].content.parts[0].text' result.json)
+          echo "BODY<<EOF" >> $GITHUB_ENV
+          echo "$BODY" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      # ✅ 抽出した BODY を PR にコメント投稿（curlのみ）
+      - name: Post Gemini result to PR
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          BODY: ${{ env.BODY }}
         run: |
           curl -sS -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" \
-            -d "$(jq -n --arg body '✅ Gemini PR Comment workflow is working!' '{body: $body}')"
+            -d "$(jq -n --arg body "$BODY" '{body: $body}')"
