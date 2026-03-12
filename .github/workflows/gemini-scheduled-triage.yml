@@ -1,0 +1,21 @@
+name: '🕒 Gemini Scheduled Triage (DISABLED)'
+
+# ✅ 完全停止：このworkflowはどのイベントでも起動しません
+on: []
+
+defaults:
+  run:
+    shell: 'bash'
+
+jobs:
+  scheduled-triage:
+    runs-on: 'ubuntu-latest'
+    permissions:
+      contents: 'read'
+      issues: 'write'
+      pull-requests: 'write'
+    steps:
+      - name: 'Disabled notice'
+        run: |
+          echo "This workflow is disabled (on: [])."
+          echo "No actions will be executed."
