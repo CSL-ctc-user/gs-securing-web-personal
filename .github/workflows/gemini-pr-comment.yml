@@ -4,10 +4,16 @@ on:
   pull_request:
     types: [opened]
   workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Comment target PR number (only for workflow_dispatch)"
+        required: false
+        type: string
 
 permissions:
   contents: read
   pull-requests: write
+  issues: write
 
 jobs:
   gemini:
@@ -16,6 +22,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Ensure jq is available
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y jq
+          fi
+          jq --version
 
       - name: Show trigger context
         run: |
@@ -30,32 +44,75 @@ jobs:
           echo "PR title=${{ github.event.pull_request.title }}"
           echo "PR author=${{ github.event.pull_request.user.login }}"
 
-      # --- ここは本来: Gemini API を呼んで result.json を作る場所 ---
-      # いまは result.json が既にある/作っている前提なので placeholder のまま
+      # --- ここで本来は Gemini API を呼び出して result.json を生成 ---
       - name: Placeholder for Gemini processing
         run: |
           echo "Here we will call Gemini API later"
-          # 例: ここで result.json を生成する処理を入れる
+          # TODO: result.json を生成する処理を入れる
 
-      # ✅ result.json から本文を抽出して環境変数に入れる（次stepで使う）
+      - name: Verify result.json exists
+        run: |
+          if [ ! -f result.json ]; then
+            echo "::error::result.json not found. Generate it in the Gemini step."
+            ls -la
+            exit 1
+          fi
+
+      # ✅ result.json から本文を抽出して環境変数に入れる
       - name: Extract BODY from result.json
         run: |
-          BODY=$(jq -r '.candidates[0].content.parts[0].text' result.json)
-          echo "BODY<<EOF" >> $GITHUB_ENV
-          echo "$BODY" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+          BODY="$(jq -r '.candidates[0].content.parts[0].text // empty' result.json)"
 
-      # ✅ 抽出した BODY を PR にコメント投稿（curlのみ）
+          if [ -z "$BODY" ] || [ "$BODY" = "null" ]; then
+            echo "::error::BODY is empty. Check result.json structure."
+            echo "---- result.json (head) ----"
+            head -c 2000 result.json || true
+            echo
+            exit 1
+          fi
+
+          # 複数行対応でGITHUB_ENVへ
+          {
+            echo "BODY<<EOF"
+            echo "$BODY"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
+      # ✅ PR番号を決定（pull_request なら event から、workflow_dispatch なら inputs から）
+      - name: Determine PR number
+        id: pr
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          else
+            # workflow_dispatchの場合は inputs.pr_number を使う
+            PR_IN="${{ inputs.pr_number }}"
+            if [ -n "$PR_IN" ]; then
+              echo "number=$PR_IN" >> "$GITHUB_OUTPUT"
+            else
+              echo "number=" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      # ✅ 抽出した BODY を PR にコメント投稿（GitHub API）
       - name: Post Gemini result to PR
-        if: github.event_name == 'pull_request'
+        if: steps.pr.outputs.number != ''
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
           BODY: ${{ env.BODY }}
         run: |
+          echo "Posting comment to PR #$PR_NUMBER on $REPO"
           curl -sS -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" \
             -d "$(jq -n --arg body "$BODY" '{body: $body}')"
+
+      # workflow_dispatch で pr_number を渡してない場合は明示的にスキップ通知
+      - name: Skip notice (no PR number)
+        if: steps.pr.outputs.number == ''
+        run: |
+          echo "No PR number provided. Skipping comment."
+          echo "If you ran workflow_dispatch, set inputs.pr_number."
