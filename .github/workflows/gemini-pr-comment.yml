@@ -5,6 +5,11 @@ on:
     types: [opened]
   workflow_dispatch:
 
+# ★重要：GITHUB_TOKEN の権限を明示（PRにコメント投稿するため）
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   gemini:
     runs-on: ubuntu-latest
@@ -35,14 +40,16 @@ jobs:
         run: |
           echo "Here we will call Gemini API later"
 
-      # ★追加：PR にコメントする
+      # ★追加：PR にコメントする（PRはIssue扱いなので issue comments API）
       - name: Post comment to PR
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          curl -X POST \
+          curl -sS -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
-            -d '{"body":"✅ Gemini PR Comment workflow is working!"}'
+            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" \
+            -d "$(jq -n --arg body '✅ Gemini PR Comment workflow is working!' '{body: $body}')"
