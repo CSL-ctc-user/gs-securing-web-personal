@@ -45,9 +45,23 @@ jobs:
           echo "PR author=${{ github.event.pull_request.user.login }}"
 
       # --- TODO: ここで Gemini API/CLI を呼んで result.json を生成する ---
-      - name: Placeholder for Gemini processing
+      # PRを通すために、ひとまずスタブの result.json を生成（後で本処理に置換）
+      - name: Placeholder for Gemini processing (stub result.json)
         run: |
           echo "TODO: Generate result.json here (Gemini API/CLI call)"
+          cat > result.json <<'JSON'
+          {
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    { "text": "Gemini placeholder comment (stub result.json)." }
+                  ]
+                }
+              }
+            ]
+          }
+          JSON
 
       - name: Verify result.json exists
         run: |
@@ -93,13 +107,12 @@ jobs:
             fi
           fi
 
-      - name: Post Gemini result to PR (GitHub REST API)
+      - name: Post Gemini result to PR (GitHub REST API) - PAT
         if: steps.pr.outputs.number != ''
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_PAT_ACTIONS }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
-          BODY: ${{ env.BODY }}
         run: |
           echo "Posting comment to PR #$PR_NUMBER on $REPO"
 
@@ -107,11 +120,10 @@ jobs:
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" \
-            -d "$(jq -n --arg body "$BODY" '{body: $body}')"
+            -d "$(jq -n --arg body "${{ env.BODY }}" '{body: $body}')"
 
       - name: Skip notice (no PR number)
         if: steps.pr.outputs.number == ''
         run: |
           echo "No PR number available."
           echo "If you used workflow_dispatch, set inputs.pr_number."
-
