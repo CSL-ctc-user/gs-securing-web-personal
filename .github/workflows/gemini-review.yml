@@ -89,8 +89,7 @@ jobs:
           OUT_FILE="$RUNNER_TEMP/gemini/out.txt"
           ERR_FILE="$RUNNER_TEMP/gemini/err.txt"
 
-          cat <<'PROMPT' > "$RUNNER_TEMP/gemini/prompt.txt"
-You are Gemini CLI running in GitHub Actions.
+          PROMPT="You are Gemini CLI running in GitHub Actions.
 Perform a pull request review.
 
 Provide:
@@ -99,13 +98,10 @@ Provide:
 3) Concrete suggestions (with file/line references when possible)
 
 Keep it concise and actionable.
-Output only the final comment body text (no markdown fences).
-PROMPT
+Output only the final comment body text (no markdown fences)."
 
           set +e
-          printf "%s\n\nCONTEXT:\n%s\n" \
-            "$(cat "$RUNNER_TEMP/gemini/prompt.txt")" \
-            "${CONTEXT}" \
+          printf "%s\n\nCONTEXT:\n%s\n" "$PROMPT" "${CONTEXT}" \
             | gemini --model gemini-1.5-flash --prompt - \
               >"$OUT_FILE" 2>"$ERR_FILE"
           rc=$?
