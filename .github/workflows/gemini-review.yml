@@ -1,4 +1,3 @@
-# .github/workflows/gemini-review.yml
 name: '🧪 Gemini Review'
 
 on:
@@ -57,8 +56,6 @@ jobs:
           url="$(echo "$pr" | jq -r '.html_url // ""')"
           base="$(echo "$pr" | jq -r '.base.ref // ""')"
           head="$(echo "$pr" | jq -r '.head.ref // ""')"
-
-          # diffは大きくなりがちなので上限を付ける（クォータ/トークン対策）
           diff="$(gh api -H 'Accept: application/vnd.github.v3.diff' "repos/${REPO}/pulls/${ISSUE_NUMBER}" | head -c 200000)"
 
           {
@@ -83,7 +80,7 @@ jobs:
           npm install -g @google/gemini-cli@latest
           gemini --version
 
-      - name: Run Gemini CLI (review) (Flash fixed)
+      - name: Run Gemini CLI (review / Flash fixed)
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
@@ -92,17 +89,22 @@ jobs:
           OUT_FILE="$RUNNER_TEMP/gemini/out.txt"
           ERR_FILE="$RUNNER_TEMP/gemini/err.txt"
 
-          # プロンプトはコマンド引数に載せず、stdinへ（改行や引用符の事故回避）
-          set +e
-          printf "%s\n\nCONTEXT:\n%s\n" \
-            "You are Gemini CLI running in GitHub Actions.
+          cat <<'PROMPT' > "$RUNNER_TEMP/gemini/prompt.txt"
+You are Gemini CLI running in GitHub Actions.
 Perform a pull request review.
+
 Provide:
 1) Summary of changes
 2) Potential risks (security, correctness, maintainability)
 3) Concrete suggestions (with file/line references when possible)
+
 Keep it concise and actionable.
-Output only the final comment body text (no markdown fences)." \
+Output only the final comment body text (no markdown fences).
+PROMPT
+
+          set +e
+          printf "%s\n\nCONTEXT:\n%s\n" \
+            "$(cat "$RUNNER_TEMP/gemini/prompt.txt")" \
             "${CONTEXT}" \
             | gemini --model gemini-1.5-flash --prompt - \
               >"$OUT_FILE" 2>"$ERR_FILE"
@@ -113,7 +115,7 @@ Output only the final comment body text (no markdown fences)." \
           echo "OUT_FILE=$OUT_FILE" >> "$GITHUB_ENV"
           echo "ERR_FILE=$ERR_FILE" >> "$GITHUB_ENV"
 
-      - name: Post review comment (PAT) (always)
+      - name: Post review comment (PAT)
         if: ${{ always() }}
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT_ACTIONS }}
