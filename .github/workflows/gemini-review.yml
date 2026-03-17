@@ -29,7 +29,11 @@ jobs:
       - name: Placeholder (review)
         run: |
           echo "TODO: run Gemini review here"
-          echo "REPLY=Gemini review placeholder: ${{ inputs.additional_context }}" >> $GITHUB_ENV
+          {
+            echo "REPLY<<EOF"
+            echo "Gemini review placeholder: ${{ inputs.additional_context }}"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
 
       - name: Post review comment (PAT)
         env:
@@ -38,6 +42,11 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           BODY: ${{ env.REPLY }}
         run: |
+          if [ -z "$BODY" ]; then
+            echo "::error::REPLY(BODY) is empty"
+            exit 1
+          fi
+
           gh issue comment "${ISSUE_NUMBER}" \
             --body "${BODY}" \
             --repo "${REPOSITORY}"
