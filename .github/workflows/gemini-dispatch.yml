@@ -150,6 +150,7 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
+      id-token: write
     with:
       additional_context: ${{ needs.dispatch.outputs.additional_context }}
       issue_number: ${{ needs.dispatch.outputs.issue_number }}
