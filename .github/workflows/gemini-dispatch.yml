@@ -43,9 +43,6 @@ jobs:
           env | grep '^DEBUG_'
 
   dispatch:
-    # For PRs: only if not from a fork
-    # For issues: only on open/reopen
-    # For comments: only if user types @gemini-cli and is OWNER/MEMBER/COLLABORATOR
     if: |-
       (
         github.event_name == 'pull_request' &&
@@ -55,10 +52,17 @@ jobs:
         contains(fromJSON('["opened", "reopened"]'), github.event.action)
       ) || (
         github.event.sender.type == 'User' &&
-        startsWith(github.event.comment.body || github.event.review.body || github.event.issue.body, '@gemini-cli') &&
+        startsWith(
+          github.event.comment.body ||
+          github.event.review.body ||
+          github.event.issue.body,
+          '@gemini-cli'
+        ) &&
         contains(
           fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
-          github.event.comment.author_association || github.event.review.author_association || github.event.issue.author_association
+          github.event.comment.author_association ||
+          github.event.review.author_association ||
+          github.event.issue.author_association
         )
       )
     runs-on: 'ubuntu-latest'
@@ -74,7 +78,7 @@ jobs:
     steps:
       - name: 'Extract command'
         id: 'extract_command'
-        uses: 'actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea' # ratchet:actions/github-script@v7
+        uses: 'actions/github-script@v7'
         env:
           EVENT_TYPE: '${{ github.event_name }}.${{ github.event.action }}'
           REQUEST: '${{ github.event.comment.body || github.event.review.body || github.event.issue.body }}'
@@ -90,27 +94,32 @@ jobs:
               core.setOutput('command', 'triage');
             } else if (request.startsWith("@gemini-cli /review")) {
               core.setOutput('command', 'review');
-              const additionalContext = request.replace(/^@gemini-cli \/review/, '').trim();
-              core.setOutput('additional_context', additionalContext);
+              core.setOutput(
+                'additional_context',
+                request.replace(/^@gemini-cli \/review/, '').trim()
+              );
             } else if (request.startsWith("@gemini-cli /triage")) {
               core.setOutput('command', 'triage');
             } else if (request.startsWith("@gemini-cli /approve")) {
               core.setOutput('command', 'approve');
             } else if (request.startsWith("@gemini-cli")) {
-              const additionalContext = request.replace(/^@gemini-cli/, '').trim();
               core.setOutput('command', 'invoke');
-              core.setOutput('additional_context', additionalContext);
+              core.setOutput(
+                'additional_context',
+                request.replace(/^@gemini-cli/, '').trim()
+              );
             } else {
               core.setOutput('command', 'fallthrough');
             }
 
       - name: 'Acknowledge request (PAT)'
         env:
-          # PAT統一：GITHUB_TOKEN を secrets.GH_PAT_ACTIONS のみにする
           GITHUB_TOKEN: '${{ secrets.GH_PAT_ACTIONS }}'
           ISSUE_NUMBER: '${{ github.event.pull_request.number || github.event.issue.number }}'
           MESSAGE: |-
-            🤖 Hi @${{ github.actor }}, I've received your request, and I'm working on it now! You can track my progress [in the logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for more details.
+            🤖 Hi @${{ github.actor }}, I've received your request, and I'm working on it now!
+            You can track my progress here:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           REPOSITORY: '${{ github.repository }}'
         run: |-
           gh issue comment "${ISSUE_NUMBER}" \
@@ -124,7 +133,6 @@ jobs:
     uses: './.github/workflows/gemini-review.yml'
     permissions:
       contents: 'read'
-      id-token: 'write'
       issues: 'write'
       pull-requests: 'write'
     with:
@@ -138,7 +146,6 @@ jobs:
     uses: './.github/workflows/gemini-triage.yml'
     permissions:
       contents: 'read'
-      id-token: 'write'
       issues: 'write'
       pull-requests: 'write'
     with:
@@ -152,7 +159,6 @@ jobs:
     uses: './.github/workflows/gemini-invoke.yml'
     permissions:
       contents: 'read'
-      id-token: 'write'
       issues: 'write'
       pull-requests: 'write'
     with:
@@ -166,7 +172,6 @@ jobs:
     uses: './.github/workflows/gemini-plan-execute.yml'
     permissions:
       contents: 'write'
-      id-token: 'write'
       issues: 'write'
       pull-requests: 'write'
     with:
@@ -190,11 +195,12 @@ jobs:
     steps:
       - name: 'Send failure comment (PAT)'
         env:
-          # PAT統一：GITHUB_TOKEN を secrets.GH_PAT_ACTIONS のみにする
           GITHUB_TOKEN: '${{ secrets.GH_PAT_ACTIONS }}'
           ISSUE_NUMBER: '${{ github.event.pull_request.number || github.event.issue.number }}'
           MESSAGE: |-
-            🤖 I'm sorry @${{ github.actor }}, but I was unable to process your request. Please [see the logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for more details.
+            🤖 I'm sorry @${{ github.actor }}, but I was unable to process your request.
+            Please see the logs:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           REPOSITORY: '${{ github.repository }}'
         run: |-
           gh issue comment "${ISSUE_NUMBER}" \
