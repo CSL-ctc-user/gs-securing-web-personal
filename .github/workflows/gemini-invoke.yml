@@ -1,4 +1,3 @@
-# .github/workflows/gemini-invoke.yml
 name: '✨ Gemini Invoke'
 
 on:
@@ -10,6 +9,10 @@ on:
       issue_number:
         required: true
         type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.issue_number }}
+  cancel-in-progress: true
 
 defaults:
   run:
@@ -27,8 +30,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Prepare dirs
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.gemini" "$GITHUB_WORKSPACE/.gemini" "$RUNNER_TEMP/gemini"
+
       - name: Fetch PR diff / Issue body (PAT)
-        id: fetch_context
         env:
           GH_TOKEN: ${{ secrets.GH_PAT_ACTIONS }}
           REPO: ${{ github.repository }}
@@ -36,19 +43,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Try PR first
-          if gh api "repos/${REPO}/pulls/${ISSUE_NUMBER}" >/tmp/pr.json 2>/dev/null; then
-            echo "IS_PR=true" >> "$GITHUB_ENV"
+          DELIM="CTX_$(date +%s%N)_$RANDOM"
 
+          if gh api "repos/${REPO}/pulls/${ISSUE_NUMBER}" >/tmp/pr.json 2>/dev/null; then
             title="$(jq -r '.title // ""' /tmp/pr.json)"
             url="$(jq -r '.html_url // ""' /tmp/pr.json)"
             base="$(jq -r '.base.ref // ""' /tmp/pr.json)"
             head="$(jq -r '.head.ref // ""' /tmp/pr.json)"
-
-            diff="$(gh api -H 'Accept: application/vnd.github.v3.diff' "repos/${REPO}/pulls/${ISSUE_NUMBER}")"
+            diff="$(gh api -H 'Accept: application/vnd.github.v3.diff' "repos/${REPO}/pulls/${ISSUE_NUMBER}" | head -c 200000)"
 
             {
-              echo "CONTEXT<<EOF"
+              echo "CONTEXT<<${DELIM}"
               echo "PR: #${ISSUE_NUMBER}"
               echo "Title: ${title}"
               echo "URL: ${url}"
@@ -58,20 +63,18 @@ jobs:
               echo "User request:"
               echo "${{ inputs.additional_context }}"
               echo ""
-              echo "Diff:"
+              echo "Diff (truncated):"
               echo "${diff}"
-              echo "EOF"
+              echo "${DELIM}"
             } >> "$GITHUB_ENV"
           else
-            echo "IS_PR=false" >> "$GITHUB_ENV"
-
             issue="$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}")"
             title="$(echo "$issue" | jq -r '.title // ""')"
-            body="$(echo "$issue" | jq -r '.body // ""')"
+            body="$(echo "$issue" | jq -r '.body // ""' | head -c 200000)"
             url="$(echo "$issue" | jq -r '.html_url // ""')"
 
             {
-              echo "CONTEXT<<EOF"
+              echo "CONTEXT<<${DELIM}"
               echo "Issue: #${ISSUE_NUMBER}"
               echo "Title: ${title}"
               echo "URL: ${url}"
@@ -79,55 +82,65 @@ jobs:
               echo "User request:"
               echo "${{ inputs.additional_context }}"
               echo ""
-              echo "Body:"
+              echo "Body (truncated):"
               echo "${body}"
-              echo "EOF"
+              echo "${DELIM}"
             } >> "$GITHUB_ENV"
           fi
 
-      - name: Run Gemini (invoke)
-        id: gemini
-        uses: google-github-actions/run-gemini-cli@v0
+      - name: Install Gemini CLI
+        run: |
+          set -euo pipefail
+          npm i -g @google/gemini-cli@latest
+          gemini --version
+
+      - name: Run Gemini CLI (non-interactive)
+        id: run_gemini
         env:
-          GITHUB_TOKEN: ''
-        with:
-          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
-          gemini_cli_version: ${{ vars.GEMINI_CLI_VERSION }}
-          gemini_debug: ${{ fromJSON(vars.GEMINI_DEBUG || vars.ACTIONS_STEP_DEBUG || 'false') }}
-          gemini_model: ${{ vars.GEMINI_MODEL }}
-          google_api_key: ${{ secrets.GOOGLE_API_KEY }}
-          use_gemini_code_assist: ${{ vars.GOOGLE_GENAI_USE_GCA }}
-          use_vertex_ai: ${{ vars.GOOGLE_GENAI_USE_VERTEXAI }}
-          gcp_location: ${{ vars.GOOGLE_CLOUD_LOCATION }}
-          gcp_project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
-          gcp_service_account: ${{ vars.SERVICE_ACCOUNT_EMAIL }}
-          gcp_workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          upload_artifacts: ${{ vars.UPLOAD_ARTIFACTS }}
-          workflow_name: 'gemini-invoke'
-          prompt: |-
-            You are Gemini CLI running in GitHub Actions.
-            Produce a concise, helpful response for the requester.
-            If CONTEXT includes a PR diff, summarize changes, risks, and suggested improvements.
-            If CONTEXT includes an Issue body, answer the request and propose next steps.
-            Output only the final comment body text (no markdown fences).
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+        run: |
+          set -euo pipefail
 
-            CONTEXT:
-            ${{
-              env.CONTEXT
-            }}
+          PROMPT_FILE="$RUNNER_TEMP/gemini/prompt.txt"
+          OUT_FILE="$RUNNER_TEMP/gemini/out.txt"
 
-      - name: Post reply comment (PAT)
+          cat > "$PROMPT_FILE" <<'PROMPT'
+You are Gemini CLI running in GitHub Actions.
+Always return a helpful response.
+If CONTEXT includes a PR diff, summarize changes, risks, and suggestions.
+If CONTEXT includes an issue, propose next steps.
+Output only the final comment body text.
+PROMPT
+
+          # CONTEXT が巨大でも壊れないよう stdin で渡す
+          # 失敗しても後続でコメントを返すために exit code を握る
+          set +e
+          printf "%s\n\nCONTEXT:\n%s\n" "$(cat "$PROMPT_FILE")" "${CONTEXT}" \
+            | gemini --model "${GEMINI_MODEL}" --prompt - >"$OUT_FILE" 2>"$RUNNER_TEMP/gemini/err.txt"
+          rc=$?
+          set -e
+
+          echo "RC=$rc" >> "$GITHUB_ENV"
+          # 出力を環境変数に入れず、ファイルとして残す（EOF問題回避）
+          echo "OUT_FILE=$OUT_FILE" >> "$GITHUB_ENV"
+
+      - name: Post reply comment (PAT) (always)
+        if: ${{ always() }}
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT_ACTIONS }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           REPOSITORY: ${{ github.repository }}
-          BODY: ${{ steps.gemini.outputs.summary }}
         run: |
-          if [ -z "${BODY}" ]; then
-            echo "::error::Gemini output(summary) is empty"
-            exit 1
+          set -euo pipefail
+
+          if [ "${RC:-1}" = "0" ] && [ -s "${OUT_FILE:-}" ]; then
+            body="$(cat "$OUT_FILE")"
+          else
+            err="$(cat "$RUNNER_TEMP/gemini/err.txt" 2>/dev/null || true)"
+            body="❌ Gemini の実行に失敗しました。\n\n${err}"
           fi
 
           gh issue comment "${ISSUE_NUMBER}" \
-            --body "${BODY}" \
+            --body "${body}" \
             --repo "${REPOSITORY}"
