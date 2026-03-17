@@ -1,3 +1,4 @@
+# .github/workflows/gemini-review.yml
 name: '🧪 Gemini Review'
 
 on:
@@ -21,23 +22,89 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --- TODO: ここでGeminiレビューを実行して返信文を生成 ---
-      - name: Placeholder (review)
+      - name: Fetch PR diff (PAT)
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_ACTIONS }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
-          echo "TODO: run Gemini review here"
-          echo "REPLY=Gemini review placeholder: ${{ inputs.additional_context }}" >> $GITHUB_ENV
+          set -euo pipefail
+
+          pr="$(gh api "repos/${REPO}/pulls/${ISSUE_NUMBER}")"
+          title="$(echo "$pr" | jq -r '.title // ""')"
+          url="$(echo "$pr" | jq -r '.html_url // ""')"
+          base="$(echo "$pr" | jq -r '.base.ref // ""')"
+          head="$(echo "$pr" | jq -r '.head.ref // ""')"
+
+          diff="$(gh api -H 'Accept: application/vnd.github.v3.diff' "repos/${REPO}/pulls/${ISSUE_NUMBER}")"
+
+          {
+            echo "CONTEXT<<EOF"
+            echo "PR Review: #${ISSUE_NUMBER}"
+            echo "Title: ${title}"
+            echo "URL: ${url}"
+            echo "Base: ${base}"
+            echo "Head: ${head}"
+            echo ""
+            echo "Additional context:"
+            echo "${{ inputs.additional_context }}"
+            echo ""
+            echo "Diff:"
+            echo "${diff}"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
+      - name: Run Gemini (review)
+        id: gemini
+        uses: google-github-actions/run-gemini-cli@v0
+        env:
+          GITHUB_TOKEN: ''
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          gemini_cli_version: ${{ vars.GEMINI_CLI_VERSION }}
+          gemini_debug: ${{ fromJSON(vars.GEMINI_DEBUG || vars.ACTIONS_STEP_DEBUG || 'false') }}
+          gemini_model: ${{ vars.GEMINI_MODEL }}
+          google_api_key: ${{ secrets.GOOGLE_API_KEY }}
+          use_gemini_code_assist: ${{ vars.GOOGLE_GENAI_USE_GCA }}
+          use_vertex_ai: ${{ vars.GOOGLE_GENAI_USE_VERTEXAI }}
+          gcp_location: ${{ vars.GOOGLE_CLOUD_LOCATION }}
+          gcp_project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
+          gcp_service_account: ${{ vars.SERVICE_ACCOUNT_EMAIL }}
+          gcp_workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          upload_artifacts: ${{ vars.UPLOAD_ARTIFACTS }}
+          workflow_name: 'gemini-review'
+          prompt: |-
+            You are Gemini CLI running in GitHub Actions.
+            Perform a pull request review.
+            Provide:
+            1) Summary of changes
+            2) Potential risks (security, correctness, maintainability)
+            3) Concrete suggestions (with file/line references when possible)
+            Keep it concise and actionable.
+            Output only the final comment body text (no markdown fences).
+
+            CONTEXT:
+            ${{
+              env.CONTEXT
+            }}
 
       - name: Post review comment (PAT)
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT_ACTIONS }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           REPOSITORY: ${{ github.repository }}
-          BODY: ${{ env.REPLY }}
+          BODY: ${{ steps.gemini.outputs.summary }}
         run: |
+          if [ -z "${BODY}" ]; then
+            echo "::error::Gemini output(summary) is empty"
+            exit 1
+          fi
+
           gh issue comment "${ISSUE_NUMBER}" \
             --body "${BODY}" \
             --repo "${REPOSITORY}"
