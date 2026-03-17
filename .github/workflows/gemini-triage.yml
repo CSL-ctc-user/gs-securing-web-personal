@@ -1,12 +1,14 @@
 name: '🏷️ Gemini Triage'
 
 on:
-  issues:
-    types: [opened]
-
-concurrency:
-  group: gemini-triage-${{ github.event.issue.number }}
-  cancel-in-progress: true
+  workflow_call:
+    inputs:
+      issue_number:
+        required: true
+        type: string
+      additional_context:
+        required: false
+        type: string
 
 defaults:
   run:
@@ -21,69 +23,61 @@ jobs:
 
     steps:
       - name: Prepare dirs
-        run: |
-          set -euo pipefail
-          mkdir -p "$HOME/.gemini" "$RUNNER_TEMP/gemini"
+        run: mkdir -p "$RUNNER_TEMP/gemini"
 
-      - name: Install deps (jq)
+      - name: Install deps
         run: |
           sudo apt-get update
           sudo apt-get install -y jq
 
-      - name: Install Gemini CLI
+      - name: Build context file
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_ACTIONS }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
           set -euo pipefail
-          npm install -g @google/gemini-cli@latest
-          gemini --version
-
-      - name: Build triage context
-        run: |
-          set -euo pipefail
-
-          DELIM="CTX_$(date +%s%N)_$RANDOM"
-
+          CONTEXT_FILE="$RUNNER_TEMP/gemini/context.txt"
+          issue="$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}")"
+          title="$(echo "$issue" | jq -r '.title // ""')"
+          body="$(echo "$issue" | jq -r '.body // ""')"
+          url="$(echo "$issue" | jq -r '.html_url // ""')"
           {
-            echo "CONTEXT<<${DELIM}"
-            echo "Issue: #${{ github.event.issue.number }}"
-            echo "Title: ${{ github.event.issue.title }}"
-            echo "URL: ${{ github.event.issue.html_url }}"
+            echo "Issue: #${ISSUE_NUMBER}"
+            echo "Title: ${title}"
+            echo "URL: ${url}"
+            echo ""
+            echo "Additional context:"
+            echo "${{ inputs.additional_context }}"
             echo ""
             echo "Body:"
-            echo "${{ github.event.issue.body }}"
-            echo ""
-            echo "Task:"
-            echo "- Propose labels"
-            echo "- Suggest priority"
-            echo "- Suggest next actions"
-            echo "${DELIM}"
-          } >> "$GITHUB_ENV"
+            echo "${body}"
+          } > "$CONTEXT_FILE"
+          echo "CONTEXT_FILE=$CONTEXT_FILE" >> "$GITHUB_ENV"
 
-      - name: Run Gemini CLI (Flash fixed)
+      - name: Install Gemini CLI
+        run: npm install -g @google/gemini-cli@latest
+
+      - name: Run Gemini (Flash)
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          set -euo pipefail
-
-          OUT_FILE="$RUNNER_TEMP/gemini/out.txt"
-          ERR_FILE="$RUNNER_TEMP/gemini/err.txt"
-
+          OUT="$RUNNER_TEMP/gemini/out.txt"
           set +e
-          printf "CONTEXT:\n%s\n" "${CONTEXT}" \
-            | gemini --model gemini-1.5-flash --prompt - \
-              >"$OUT_FILE" 2>"$ERR_FILE"
+          printf "%s\n" \
+            "Perform issue triage." \
+            "Suggest labels, priority, next actions." \
+            "" "CONTEXT:" \
+            | cat - "$CONTEXT_FILE" \
+            | gemini --model gemini-1.5-flash --prompt - >"$OUT" 2>/dev/null
           rc=$?
           set -e
-
           echo "RC=$rc" >> "$GITHUB_ENV"
-          echo "OUT_FILE=$OUT_FILE" >> "$GITHUB_ENV"
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
 
-      - name: Post triage comment
+      - name: Post comment
         if: ${{ env.RC == '0' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT_ACTIONS }}
         run: |
-          set -euo pipefail
-
-          gh issue comment "${{ github.event.issue.number }}" \
-            --body-file "$OUT_FILE" \
-            --repo "${{ github.repository }}"
+          gh issue comment "${{ inputs.issue_number }}" --body-file "$OUT" --repo "${{ github.repository }}"
