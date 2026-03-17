@@ -25,7 +25,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --- TODO: ここでGemini plan/execute を実行して返信文を生成 ---
+      # --- TODO:ここでGemini plan/execute を実行して返信文を生成 ---
       - name: Placeholder (plan-execute)
         run: |
           echo "TODO: run Gemini plan/execute here"
