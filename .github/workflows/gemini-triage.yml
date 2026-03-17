@@ -29,7 +29,6 @@ jobs:
       selected_labels: ${{ steps.gemini_analysis.outputs.selected_labels || '' }}
     permissions:
       contents: read
-      id-token: write
       issues: read
       pull-requests: read
 
