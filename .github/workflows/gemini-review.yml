@@ -133,4 +133,3 @@ jobs:
           gh issue comment "${ISSUE_NUMBER}" \
             --body-file "$BODY_FILE" \
             --repo "${REPOSITORY}"
-
