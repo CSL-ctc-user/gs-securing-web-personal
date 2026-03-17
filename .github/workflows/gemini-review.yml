@@ -10,10 +10,6 @@ on:
         required: false
         type: string
 
-concurrency:
-  group: ${{ github.workflow }}-${{ inputs.issue_number }}
-  cancel-in-progress: true
-
 defaults:
   run:
     shell: bash
@@ -27,40 +23,31 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Prepare dirs
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/gemini"
+        run: mkdir -p "$RUNNER_TEMP/gemini"
 
-      - name: Install deps (jq)
+      - name: Install deps
         run: |
-          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y jq
 
-      - name: Fetch PR diff and build context file (PAT)
+      - name: Build context file
         env:
           GH_TOKEN: ${{ secrets.GH_PAT_ACTIONS }}
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
           set -euo pipefail
-
           CONTEXT_FILE="$RUNNER_TEMP/gemini/context.txt"
-
           pr="$(gh api "repos/${REPO}/pulls/${ISSUE_NUMBER}")"
           title="$(echo "$pr" | jq -r '.title // ""')"
           url="$(echo "$pr" | jq -r '.html_url // ""')"
           base="$(echo "$pr" | jq -r '.base.ref // ""')"
           head="$(echo "$pr" | jq -r '.head.ref // ""')"
-
-          # diff は巨大になりやすいので上限を付ける
           diff="$(gh api -H 'Accept: application/vnd.github.v3.diff' \
             "repos/${REPO}/pulls/${ISSUE_NUMBER}" | head -c 200000)"
-
           {
             echo "PR Review: #${ISSUE_NUMBER}"
             echo "Title: ${title}"
@@ -74,67 +61,42 @@ jobs:
             echo "Diff (truncated):"
             echo "${diff}"
           } > "$CONTEXT_FILE"
-
-          # env には「ファイルパスのみ」渡す（巨大テキスト禁止）
           echo "CONTEXT_FILE=$CONTEXT_FILE" >> "$GITHUB_ENV"
 
       - name: Install Gemini CLI
-        run: |
-          set -euo pipefail
-          npm install -g @google/gemini-cli@latest
-          gemini --version
+        run: npm install -g @google/gemini-cli@latest
 
-      - name: Run Gemini CLI (review / Flash fixed)
+      - name: Run Gemini (Flash)
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           set -euo pipefail
-
-          OUT_FILE="$RUNNER_TEMP/gemini/out.txt"
-          ERR_FILE="$RUNNER_TEMP/gemini/err.txt"
-
+          OUT="$RUNNER_TEMP/gemini/out.txt"
+          ERR="$RUNNER_TEMP/gemini/err.txt"
           set +e
           printf "%s\n" \
             "You are Gemini CLI running in GitHub Actions." \
             "Perform a pull request review." \
-            "" \
-            "Provide:" \
-            "1) Summary of changes" \
-            "2) Potential risks (security, correctness, maintainability)" \
-            "3) Concrete suggestions (with file/line references when possible)" \
-            "" \
-            "Keep it concise and actionable." \
-            "Output only the final comment body text (no markdown fences)." \
-            "" \
-            "CONTEXT:" \
+            "Provide: summary, risks, suggestions." \
+            "Output only final comment body." \
+            "" "CONTEXT:" \
             | cat - "$CONTEXT_FILE" \
-            | gemini --model gemini-1.5-flash --prompt - \
-              >"$OUT_FILE" 2>"$ERR_FILE"
+            | gemini --model gemini-1.5-flash --prompt - >"$OUT" 2>"$ERR"
           rc=$?
           set -e
-
           echo "RC=$rc" >> "$GITHUB_ENV"
-          echo "OUT_FILE=$OUT_FILE" >> "$GITHUB_ENV"
-          echo "ERR_FILE=$ERR_FILE" >> "$GITHUB_ENV"
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          echo "ERR=$ERR" >> "$GITHUB_ENV"
 
-      - name: Post review comment (PAT)
+      - name: Post comment
         if: ${{ always() }}
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT_ACTIONS }}
-          ISSUE_NUMBER: ${{ inputs.issue_number }}
-          REPOSITORY: ${{ github.repository }}
         run: |
-          set -euo pipefail
-
-          BODY_FILE="$RUNNER_TEMP/gemini/body.txt"
-
-          if [ "${RC:-1}" = "0" ] && [ -s "${OUT_FILE:-}" ]; then
-            cp "$OUT_FILE" "$BODY_FILE"
+          BODY="$RUNNER_TEMP/gemini/body.txt"
+          if [ "${RC:-1}" = "0" ] && [ -s "${OUT:-}" ]; then
+            cp "$OUT" "$BODY"
           else
-            err="$(cat "${ERR_FILE:-/dev/null}" 2>/dev/null || true)"
-            printf "❌ Gemini の実行に失敗しました。\n\n%s\n" "$err" > "$BODY_FILE"
+            printf "❌ Gemini failed.\n\n%s\n" "$(cat "${ERR:-/dev/null}" 2>/dev/null || true)" > "$BODY"
           fi
-
-          gh issue comment "${ISSUE_NUMBER}" \
-            --body-file "$BODY_FILE" \
-            --repo "${REPOSITORY}"
+          gh issue comment "${{ inputs.issue_number }}" --body-file "$BODY" --repo "${{ github.repository }}"
