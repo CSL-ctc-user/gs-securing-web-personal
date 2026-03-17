@@ -1,4 +1,4 @@
-name: '🏷️ Gemini Triage'
+name: '🧪 Gemini Review'
 
 on:
   workflow_call:
@@ -10,18 +10,26 @@ on:
         required: false
         type: string
 
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.issue_number }}
+  cancel-in-progress: true
+
 defaults:
   run:
     shell: bash
 
 jobs:
-  triage:
+  review:
     runs-on: ubuntu-latest
     permissions:
-      issues: write
       contents: read
+      issues: write
+      pull-requests: write
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Prepare dirs
         run: |
           set -euo pipefail
@@ -33,7 +41,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq
 
-      - name: Fetch issue context
+      - name: Fetch PR diff and build context file (PAT)
         env:
           GH_TOKEN: ${{ secrets.GH_PAT_ACTIONS }}
           REPO: ${{ github.repository }}
@@ -43,31 +51,40 @@ jobs:
 
           CONTEXT_FILE="$RUNNER_TEMP/gemini/context.txt"
 
-          issue="$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}")"
-          title="$(echo "$issue" | jq -r '.title // ""')"
-          body="$(echo "$issue" | jq -r '.body // ""')"
-          url="$(echo "$issue" | jq -r '.html_url // ""')"
+          pr="$(gh api "repos/${REPO}/pulls/${ISSUE_NUMBER}")"
+          title="$(echo "$pr" | jq -r '.title // ""')"
+          url="$(echo "$pr" | jq -r '.html_url // ""')"
+          base="$(echo "$pr" | jq -r '.base.ref // ""')"
+          head="$(echo "$pr" | jq -r '.head.ref // ""')"
+
+          # diff は巨大になりやすいので上限を付ける
+          diff="$(gh api -H 'Accept: application/vnd.github.v3.diff' \
+            "repos/${REPO}/pulls/${ISSUE_NUMBER}" | head -c 200000)"
 
           {
-            echo "Issue: #${ISSUE_NUMBER}"
+            echo "PR Review: #${ISSUE_NUMBER}"
             echo "Title: ${title}"
             echo "URL: ${url}"
+            echo "Base: ${base}"
+            echo "Head: ${head}"
             echo ""
             echo "Additional context:"
             echo "${{ inputs.additional_context }}"
             echo ""
-            echo "Body:"
-            echo "${body}"
+            echo "Diff (truncated):"
+            echo "${diff}"
           } > "$CONTEXT_FILE"
 
+          # env には「ファイルパスのみ」渡す（巨大テキスト禁止）
           echo "CONTEXT_FILE=$CONTEXT_FILE" >> "$GITHUB_ENV"
 
       - name: Install Gemini CLI
         run: |
+          set -euo pipefail
           npm install -g @google/gemini-cli@latest
           gemini --version
 
-      - name: Run Gemini CLI (triage / Flash fixed)
+      - name: Run Gemini CLI (review / Flash fixed)
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
@@ -79,14 +96,15 @@ jobs:
           set +e
           printf "%s\n" \
             "You are Gemini CLI running in GitHub Actions." \
-            "Perform issue triage." \
+            "Perform a pull request review." \
             "" \
             "Provide:" \
-            "- Suggested labels" \
-            "- Priority" \
-            "- Recommended next actions" \
+            "1) Summary of changes" \
+            "2) Potential risks (security, correctness, maintainability)" \
+            "3) Concrete suggestions (with file/line references when possible)" \
             "" \
-            "Output only the final comment body text." \
+            "Keep it concise and actionable." \
+            "Output only the final comment body text (no markdown fences)." \
             "" \
             "CONTEXT:" \
             | cat - "$CONTEXT_FILE" \
@@ -99,13 +117,24 @@ jobs:
           echo "OUT_FILE=$OUT_FILE" >> "$GITHUB_ENV"
           echo "ERR_FILE=$ERR_FILE" >> "$GITHUB_ENV"
 
-      - name: Post triage comment
-        if: ${{ env.RC == '0' }}
+      - name: Post review comment (PAT)
+        if: ${{ always() }}
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT_ACTIONS }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           REPOSITORY: ${{ github.repository }}
         run: |
+          set -euo pipefail
+
+          BODY_FILE="$RUNNER_TEMP/gemini/body.txt"
+
+          if [ "${RC:-1}" = "0" ] && [ -s "${OUT_FILE:-}" ]; then
+            cp "$OUT_FILE" "$BODY_FILE"
+          else
+            err="$(cat "${ERR_FILE:-/dev/null}" 2>/dev/null || true)"
+            printf "❌ Gemini の実行に失敗しました。\n\n%s\n" "$err" > "$BODY_FILE"
+          fi
+
           gh issue comment "${ISSUE_NUMBER}" \
-            --body-file "$OUT_FILE" \
+            --body-file "$BODY_FILE" \
             --repo "${REPOSITORY}"
