@@ -1,3 +1,4 @@
+# .github/workflows/gemini-invoke.yml
 name: '✨ Gemini Invoke'
 
 on:
@@ -21,31 +22,109 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
-      id-token: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --- TODO: ここで Gemini を実行して返信文を作る（result.json 等） ---
-      - name: Placeholder (invoke)
+      - name: Fetch PR diff / Issue body (PAT)
+        id: fetch_context
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_ACTIONS }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
-          echo "TODO: run Gemini invoke here"
-          {
-            echo "REPLY<<EOF"
-            echo "Gemini invoke placeholder: ${{ inputs.additional_context }}"
-            echo "EOF"
-          } >> "$GITHUB_ENV"
+          set -euo pipefail
+
+          # Try PR first
+          if gh api "repos/${REPO}/pulls/${ISSUE_NUMBER}" >/tmp/pr.json 2>/dev/null; then
+            echo "IS_PR=true" >> "$GITHUB_ENV"
+
+            title="$(jq -r '.title // ""' /tmp/pr.json)"
+            url="$(jq -r '.html_url // ""' /tmp/pr.json)"
+            base="$(jq -r '.base.ref // ""' /tmp/pr.json)"
+            head="$(jq -r '.head.ref // ""' /tmp/pr.json)"
+
+            diff="$(gh api -H 'Accept: application/vnd.github.v3.diff' "repos/${REPO}/pulls/${ISSUE_NUMBER}")"
+
+            {
+              echo "CONTEXT<<EOF"
+              echo "PR: #${ISSUE_NUMBER}"
+              echo "Title: ${title}"
+              echo "URL: ${url}"
+              echo "Base: ${base}"
+              echo "Head: ${head}"
+              echo ""
+              echo "User request:"
+              echo "${{ inputs.additional_context }}"
+              echo ""
+              echo "Diff:"
+              echo "${diff}"
+              echo "EOF"
+            } >> "$GITHUB_ENV"
+          else
+            echo "IS_PR=false" >> "$GITHUB_ENV"
+
+            issue="$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}")"
+            title="$(echo "$issue" | jq -r '.title // ""')"
+            body="$(echo "$issue" | jq -r '.body // ""')"
+            url="$(echo "$issue" | jq -r '.html_url // ""')"
+
+            {
+              echo "CONTEXT<<EOF"
+              echo "Issue: #${ISSUE_NUMBER}"
+              echo "Title: ${title}"
+              echo "URL: ${url}"
+              echo ""
+              echo "User request:"
+              echo "${{ inputs.additional_context }}"
+              echo ""
+              echo "Body:"
+              echo "${body}"
+              echo "EOF"
+            } >> "$GITHUB_ENV"
+          fi
+
+      - name: Run Gemini (invoke)
+        id: gemini
+        uses: google-github-actions/run-gemini-cli@v0
+        env:
+          GITHUB_TOKEN: ''
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          gemini_cli_version: ${{ vars.GEMINI_CLI_VERSION }}
+          gemini_debug: ${{ fromJSON(vars.GEMINI_DEBUG || vars.ACTIONS_STEP_DEBUG || 'false') }}
+          gemini_model: ${{ vars.GEMINI_MODEL }}
+          google_api_key: ${{ secrets.GOOGLE_API_KEY }}
+          use_gemini_code_assist: ${{ vars.GOOGLE_GENAI_USE_GCA }}
+          use_vertex_ai: ${{ vars.GOOGLE_GENAI_USE_VERTEXAI }}
+          gcp_location: ${{ vars.GOOGLE_CLOUD_LOCATION }}
+          gcp_project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
+          gcp_service_account: ${{ vars.SERVICE_ACCOUNT_EMAIL }}
+          gcp_workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          upload_artifacts: ${{ vars.UPLOAD_ARTIFACTS }}
+          workflow_name: 'gemini-invoke'
+          prompt: |-
+            You are Gemini CLI running in GitHub Actions.
+            Produce a concise, helpful response for the requester.
+            If CONTEXT includes a PR diff, summarize changes, risks, and suggested improvements.
+            If CONTEXT includes an Issue body, answer the request and propose next steps.
+            Output only the final comment body text (no markdown fences).
+
+            CONTEXT:
+            ${{
+              env.CONTEXT
+            }}
 
       - name: Post reply comment (PAT)
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT_ACTIONS }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           REPOSITORY: ${{ github.repository }}
-          BODY: ${{ env.REPLY }}
+          BODY: ${{ steps.gemini.outputs.summary }}
         run: |
-          if [ -z "$BODY" ]; then
-            echo "::error::REPLY(BODY) is empty"
+          if [ -z "${BODY}" ]; then
+            echo "::error::Gemini output(summary) is empty"
             exit 1
           fi
 
