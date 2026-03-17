@@ -27,15 +27,14 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Prepare dirs
         run: |
           set -euo pipefail
-          mkdir -p "$HOME/.gemini" "$RUNNER_TEMP/gemini"
+          mkdir -p "$RUNNER_TEMP/gemini"
 
-      - name: Install deps (jq)
+      - name: Install deps
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -49,19 +48,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          DELIM="CTX_$(date +%s%N)_$RANDOM"
+          CONTEXT_FILE="$RUNNER_TEMP/gemini/context.txt"
 
           pr="$(gh api "repos/${REPO}/pulls/${ISSUE_NUMBER}")"
           title="$(echo "$pr" | jq -r '.title // ""')"
           url="$(echo "$pr" | jq -r '.html_url // ""')"
           base="$(echo "$pr" | jq -r '.base.ref // ""')"
           head="$(echo "$pr" | jq -r '.head.ref // ""')"
-
           diff="$(gh api -H 'Accept: application/vnd.github.v3.diff' \
             "repos/${REPO}/pulls/${ISSUE_NUMBER}" | head -c 200000)"
 
           {
-            echo "CONTEXT<<${DELIM}"
             echo "PR Review: #${ISSUE_NUMBER}"
             echo "Title: ${title}"
             echo "URL: ${url}"
@@ -73,16 +70,16 @@ jobs:
             echo ""
             echo "Diff (truncated):"
             echo "${diff}"
-            echo "${DELIM}"
-          } >> "$GITHUB_ENV"
+          } > "$CONTEXT_FILE"
+
+          echo "CONTEXT_FILE=$CONTEXT_FILE" >> "$GITHUB_ENV"
 
       - name: Install Gemini CLI
         run: |
-          set -euo pipefail
           npm install -g @google/gemini-cli@latest
           gemini --version
 
-      - name: Run Gemini CLI (review / Flash fixed)
+      - name: Run Gemini CLI (Flash fixed)
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
@@ -105,7 +102,7 @@ jobs:
             "Output only the final comment body text (no markdown fences)." \
             "" \
             "CONTEXT:" \
-            "${CONTEXT}" \
+            | cat - "$CONTEXT_FILE" \
             | gemini --model gemini-1.5-flash --prompt - \
               >"$OUT_FILE" 2>"$ERR_FILE"
           rc=$?
@@ -136,3 +133,4 @@ jobs:
           gh issue comment "${ISSUE_NUMBER}" \
             --body-file "$BODY_FILE" \
             --repo "${REPOSITORY}"
+``
