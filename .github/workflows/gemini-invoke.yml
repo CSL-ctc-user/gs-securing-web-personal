@@ -35,6 +35,11 @@ jobs:
           set -euo pipefail
           mkdir -p "$HOME/.gemini" "$GITHUB_WORKSPACE/.gemini" "$RUNNER_TEMP/gemini"
 
+      - name: Install deps (jq)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
       - name: Fetch PR diff / Issue body (PAT)
         env:
           GH_TOKEN: ${{ secrets.GH_PAT_ACTIONS }}
@@ -91,13 +96,12 @@ jobs:
       - name: Install Gemini CLI
         run: |
           set -euo pipefail
-          npm i -g @google/gemini-cli@latest
+          npm install -g @google/gemini-cli@latest
           gemini --version
 
       - name: Run Gemini CLI (non-interactive)
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
         run: |
           set -euo pipefail
 
@@ -105,17 +109,20 @@ jobs:
           OUT_FILE="$RUNNER_TEMP/gemini/out.txt"
           ERR_FILE="$RUNNER_TEMP/gemini/err.txt"
 
+          mkdir -p "$(dirname "$PROMPT_FILE")"
+
           printf "%s\n" \
-          "You are Gemini CLI running in GitHub Actions." \
-          "Always return a helpful response." \
-          "If CONTEXT includes a PR diff, summarize changes, risks, and suggestions." \
-          "If CONTEXT includes an issue, propose next steps." \
-          "Output only the final comment body text." \
-          > "$PROMPT_FILE"
+            "You are Gemini CLI running in GitHub Actions." \
+            "Always return a helpful response." \
+            "If CONTEXT includes a PR diff, summarize changes, risks, and suggestions." \
+            "If CONTEXT includes an issue, propose next steps." \
+            "Output only the final comment body text." \
+            > "$PROMPT_FILE"
 
           set +e
           printf "%s\n\nCONTEXT:\n%s\n" "$(cat "$PROMPT_FILE")" "${CONTEXT}" \
-            | gemini --model "${GEMINI_MODEL}" --prompt - >"$OUT_FILE" 2>"$ERR_FILE"
+            | gemini --model gemini-1.5-flash --prompt - \
+              >"$OUT_FILE" 2>"$ERR_FILE"
           rc=$?
           set -e
 
@@ -132,13 +139,15 @@ jobs:
         run: |
           set -euo pipefail
 
+          BODY_FILE="$RUNNER_TEMP/gemini/body.txt"
+
           if [ "${RC:-1}" = "0" ] && [ -s "${OUT_FILE:-}" ]; then
-            body="$(cat "$OUT_FILE")"
+            cp "$OUT_FILE" "$BODY_FILE"
           else
             err="$(cat "${ERR_FILE:-/dev/null}" 2>/dev/null || true)"
-            body="❌ Gemini の実行に失敗しました。\n\n${err}"
+            printf "❌ Gemini の実行に失敗しました。\n\n%s\n" "$err" > "$BODY_FILE"
           fi
 
           gh issue comment "${ISSUE_NUMBER}" \
-            --body "${body}" \
+            --body-file "$BODY_FILE" \
             --repo "${REPOSITORY}"
