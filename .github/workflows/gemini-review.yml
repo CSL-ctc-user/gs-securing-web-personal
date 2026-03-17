@@ -56,7 +56,9 @@ jobs:
           url="$(echo "$pr" | jq -r '.html_url // ""')"
           base="$(echo "$pr" | jq -r '.base.ref // ""')"
           head="$(echo "$pr" | jq -r '.head.ref // ""')"
-          diff="$(gh api -H 'Accept: application/vnd.github.v3.diff' "repos/${REPO}/pulls/${ISSUE_NUMBER}" | head -c 200000)"
+
+          diff="$(gh api -H 'Accept: application/vnd.github.v3.diff' \
+            "repos/${REPO}/pulls/${ISSUE_NUMBER}" | head -c 200000)"
 
           {
             echo "CONTEXT<<${DELIM}"
@@ -89,19 +91,21 @@ jobs:
           OUT_FILE="$RUNNER_TEMP/gemini/out.txt"
           ERR_FILE="$RUNNER_TEMP/gemini/err.txt"
 
-          PROMPT="You are Gemini CLI running in GitHub Actions.
-Perform a pull request review.
-
-Provide:
-1) Summary of changes
-2) Potential risks (security, correctness, maintainability)
-3) Concrete suggestions (with file/line references when possible)
-
-Keep it concise and actionable.
-Output only the final comment body text (no markdown fences)."
-
           set +e
-          printf "%s\n\nCONTEXT:\n%s\n" "$PROMPT" "${CONTEXT}" \
+          printf "%s\n" \
+            "You are Gemini CLI running in GitHub Actions." \
+            "Perform a pull request review." \
+            "" \
+            "Provide:" \
+            "1) Summary of changes" \
+            "2) Potential risks (security, correctness, maintainability)" \
+            "3) Concrete suggestions (with file/line references when possible)" \
+            "" \
+            "Keep it concise and actionable." \
+            "Output only the final comment body text (no markdown fences)." \
+            "" \
+            "CONTEXT:" \
+            "${CONTEXT}" \
             | gemini --model gemini-1.5-flash --prompt - \
               >"$OUT_FILE" 2>"$ERR_FILE"
           rc=$?
